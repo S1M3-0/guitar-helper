@@ -58,8 +58,25 @@ function getAmp(): GainNode {
   return amp;
 }
 
-const bufferCache = new Map<string, AudioBuffer>();
+const bufferCache = new Map<string, AudioBuffer & { loopRegion?: [number, number] }>();
 let current: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+
+// Fixed level into the amp; loudness is left to the system volume.
+const PLAYBACK_GAIN = 0.8;
+
+type PlaybackListener = (playing: boolean) => void;
+const listeners = new Set<PlaybackListener>();
+const notify = () => listeners.forEach((l) => l(current !== null));
+
+/** Subscribe to playback starting/stopping. Returns an unsubscribe function. */
+export function onPlaybackChange(listener: PlaybackListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function isPlaying(): boolean {
+  return current !== null;
+}
 
 export function stopPlayback() {
   if (!current) return;
@@ -68,36 +85,47 @@ export function stopPlayback() {
   gain.gain.setTargetAtTime(0, ac.currentTime, 0.015);
   src.stop(ac.currentTime + 0.1);
   current = null;
+  notify();
 }
 
 export interface PlayOptions {
-  volume: number;
-  /** Seconds the note is held before it is cut off. */
+  /** Seconds the note is held before it fades out. */
   length: number;
+  /** Ring until stopPlayback() is called. */
+  infinite: boolean;
 }
 
-/** Play a plucked electric-guitar note. Returns the playback duration in ms. */
-export function playFrequency(freq: number, opts: PlayOptions): number {
+/** Play a plucked electric-guitar note. */
+export function playFrequency(freq: number, opts: PlayOptions) {
   const ac = getContext();
   stopPlayback();
-  const key = `${freq.toFixed(3)}@${ac.sampleRate}/${opts.length}`;
+  const key = `${freq.toFixed(3)}@${ac.sampleRate}/${opts.infinite ? 'inf' : opts.length}`;
   let buffer = bufferCache.get(key);
   if (!buffer) {
-    const data = renderPluck(freq, ac.sampleRate, { duration: opts.length });
+    const { data, loopStart, loopEnd } = renderPluck(freq, ac.sampleRate, { duration: opts.length, loop: opts.infinite });
     buffer = ac.createBuffer(1, data.length, ac.sampleRate);
     buffer.copyToChannel(data, 0);
-    if (bufferCache.size > 200) bufferCache.clear();
+    if (loopStart !== undefined && loopEnd !== undefined) buffer.loopRegion = [loopStart, loopEnd];
+    if (bufferCache.size > 100) bufferCache.clear();
     bufferCache.set(key, buffer);
   }
   const src = ac.createBufferSource();
   src.buffer = buffer;
+  if (buffer.loopRegion) {
+    src.loop = true;
+    src.loopStart = buffer.loopRegion[0] / ac.sampleRate;
+    src.loopEnd = buffer.loopRegion[1] / ac.sampleRate;
+  }
   const gain = ac.createGain();
-  gain.gain.value = opts.volume;
+  gain.gain.value = PLAYBACK_GAIN;
   src.connect(gain).connect(getAmp());
   src.start();
   src.onended = () => {
-    if (current?.src === src) current = null;
+    if (current?.src === src) {
+      current = null;
+      notify();
+    }
   };
   current = { src, gain };
-  return buffer.duration * 1000;
+  notify();
 }
