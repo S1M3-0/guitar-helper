@@ -17,16 +17,20 @@ export interface Settings {
   scaleId: string;
   /** With a random key: pick a new key after this many notes. */
   keyChangeEvery: number;
-  /** Reveal each note as soon as it plays (easy mode). */
-  showTarget: boolean;
+  /** Hide the target note name in the target box (pure ear training). */
+  hideTarget: boolean;
   showNoteNames: boolean;
   showScaleNotes: boolean;
   /** How long the reference note is held, in seconds. */
   noteLength: number;
-  volume: number;
+  /** Let the note ring until Space is pressed again. */
+  infiniteSustain: boolean;
   a4: number;
   useFlats: boolean;
 }
+
+export const MIN_NOTE_LENGTH = 0.5;
+export const MAX_NOTE_LENGTH = 30;
 
 export const FRET_COUNT_OPTIONS = [19, 20, 21, 22, 24, 27];
 
@@ -40,11 +44,11 @@ export const DEFAULT_SETTINGS: Settings = {
   keyRoot: ANY_KEY,
   scaleId: 'chromatic',
   keyChangeEvery: 8,
-  showTarget: false,
+  hideTarget: false,
   showNoteNames: false,
   showScaleNotes: true,
-  noteLength: 2,
-  volume: 0.8,
+  noteLength: 4,
+  infiniteSustain: false,
   a4: 440,
   useFlats: false,
 };
@@ -57,7 +61,8 @@ export function normalizeSettings(s: Settings): Settings {
   const maxFret = Math.min(Math.max(s.maxFret, 0), fretCount);
   const minFret = Math.min(Math.max(s.minFret, 0), maxFret);
   const enabledStrings = s.tuning.map((_, i) => s.enabledStrings[i] ?? true);
-  return { ...s, fretCount, maxFret, minFret, enabledStrings };
+  const noteLength = Number.isFinite(s.noteLength) ? Math.min(MAX_NOTE_LENGTH, Math.max(MIN_NOTE_LENGTH, s.noteLength)) : 4;
+  return { ...s, fretCount, maxFret, minFret, enabledStrings, noteLength };
 }
 
 export function loadSettings(): Settings {

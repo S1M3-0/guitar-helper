@@ -35,7 +35,7 @@ describe('YIN pitch detection', () => {
 
   it('synthesised plucks are in tune and detectable (low E to 24th fret)', () => {
     for (const midi of [40, 45, 50, 55, 59, 64, 69, 76, 81, 86, 88]) {
-      const sig = renderPluck(midiToFreq(midi), SR, { rand: seeded(midi) });
+      const sig = renderPluck(midiToFreq(midi), SR, { rand: seeded(midi) }).data;
       for (const start of [2400, 9600, 24000]) {
         const r = detectPitch(frame(sig, start), SR);
         expect(r.freq, `midi ${midi} @${start}`).not.toBeNull();

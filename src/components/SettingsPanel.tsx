@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   SCALES,
   TUNING_PRESETS,
@@ -7,7 +7,15 @@ import {
   pcName,
   presetMidi,
 } from '../lib/music';
-import { ANY_KEY, DEFAULT_SETTINGS, FRET_COUNT_OPTIONS, normalizeSettings, type Settings } from '../lib/settings';
+import {
+  ANY_KEY,
+  DEFAULT_SETTINGS,
+  FRET_COUNT_OPTIONS,
+  MAX_NOTE_LENGTH,
+  MIN_NOTE_LENGTH,
+  normalizeSettings,
+  type Settings,
+} from '../lib/settings';
 
 interface Props {
   settings: Settings;
@@ -17,6 +25,35 @@ interface Props {
 }
 
 const NOTE_OPTIONS = Array.from({ length: 48 }, (_, i) => 23 + i); // B0 .. A#4
+
+/** Number box that only applies its value once it's valid (on blur / Enter), so typing isn't fought. */
+function SecondsInput({ value, disabled, onCommit }: { value: number; disabled?: boolean; onCommit: (v: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const v = Number(draft);
+    if (draft.trim() === '' || !Number.isFinite(v)) setDraft(String(value));
+    else onCommit(Math.min(MAX_NOTE_LENGTH, Math.max(MIN_NOTE_LENGTH, v)));
+  };
+  return (
+    <input
+      type="number"
+      min={MIN_NOTE_LENGTH}
+      max={MAX_NOTE_LENGTH}
+      step={0.5}
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const v = Number(e.target.value);
+        // Apply straight away when it's already a sensible number (e.g. spinner clicks).
+        if (e.target.value !== '' && v >= MIN_NOTE_LENGTH && v <= MAX_NOTE_LENGTH) onCommit(v);
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && commit()}
+    />
+  );
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -176,25 +213,21 @@ export function SettingsPanel({ settings: s, onChange, candidateCount, onClose }
 
       <Section title="Practice">
         <label className="check">
-          <input type="checkbox" checked={s.showTarget} onChange={(e) => set({ showTarget: e.target.checked })} />
-          <span>Reveal each note as soon as it plays (easy mode)</span>
+          <input type="checkbox" checked={s.hideTarget} onChange={(e) => set({ hideTarget: e.target.checked })} />
+          <span>Hide the target note (find it by ear, press V to reveal)</span>
         </label>
       </Section>
 
       <Section title="Sound">
         <label className="field">
-          <span>
-            Note sustain <b>{s.noteLength.toFixed(1)}s</b>
-          </span>
-          <input type="range" min={0.5} max={8} step={0.5} value={s.noteLength} onChange={(e) => set({ noteLength: Number(e.target.value) })} />
+          <span>Note sustain (seconds)</span>
+          <SecondsInput value={s.noteLength} disabled={s.infiniteSustain} onCommit={(noteLength) => set({ noteLength })} />
         </label>
-        <p className="hint">How long the app holds each note it plays (clean electric tone).</p>
-        <label className="field">
-          <span>
-            Volume <b>{Math.round(s.volume * 100)}%</b>
-          </span>
-          <input type="range" min={0} max={1} step={0.05} value={s.volume} onChange={(e) => set({ volume: Number(e.target.value) })} />
+        <label className="check">
+          <input type="checkbox" checked={s.infiniteSustain} onChange={(e) => set({ infiniteSustain: e.target.checked })} />
+          <span>Infinite sustain (rings until you press Space again)</span>
         </label>
+        <p className="hint">How long the app holds each note it plays, with a clean electric tone. Loudness follows your system volume.</p>
         <label className="field">
           <span>
             Concert pitch A4 = <b>{s.a4} Hz</b>

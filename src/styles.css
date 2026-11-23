@@ -155,6 +155,7 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; padding: 1px 5px; b
 .settings-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; min-width: 0; }
 .field.grow { flex: 1; }
+.field input:disabled { opacity: 0.45; }
 .field select, .field input[type='number'] { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 7px 8px; width: 100%; }
 .field input[type='range'] { accent-color: var(--accent); width: 100%; }
 .row { display: flex; gap: 10px; }

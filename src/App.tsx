@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Fretboard } from './components/Fretboard';
 import { SettingsPanel } from './components/SettingsPanel';
-import { playFrequency, stopPlayback } from './lib/audio';
+import { isPlaying, onPlaybackChange, playFrequency, stopPlayback } from './lib/audio';
 import {
   candidatePositions,
   findPresetId,
@@ -22,6 +22,7 @@ interface PracticeNote {
   /** Key root the note was drawn from, or null when any note was allowed. */
   keyRoot: number | null;
   scaleId: string;
+  /** Fret position shown (on the fretboard and in the target box). */
   revealed: boolean;
 }
 
@@ -43,6 +44,8 @@ export default function App() {
   const [notes, setNotes] = useState<PracticeNote[]>([]);
   const [index, setIndex] = useState(-1);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => onPlaybackChange(setPlaying), []);
 
   // Random-key rotation state (only used with a scale and "Any key").
   const keyState = useRef({ key: randomKey(), notesInKey: 0 });
@@ -69,7 +72,7 @@ export default function App() {
 
   const play = useCallback((midi: number) => {
     const s = settingsRef.current;
-    playFrequency(midiToFreq(midi, s.a4), { volume: s.volume, length: s.noteLength });
+    playFrequency(midiToFreq(midi, s.a4), { length: s.noteLength, infinite: s.infiniteSustain });
   }, []);
 
   const goTo = useCallback(
@@ -109,7 +112,7 @@ export default function App() {
     const previous = list[i]?.target ?? null;
     const pick = pickRandomPosition(candidatePositions({ ...s, keyRoot: keyRoot ?? 0 }), previous);
     if (!pick) return;
-    const note: PracticeNote = { target: pick, tuning: s.tuning, keyRoot, scaleId: s.scaleId, revealed: s.showTarget };
+    const note: PracticeNote = { target: pick, tuning: s.tuning, keyRoot, scaleId: s.scaleId, revealed: false };
     const updated = [...list, note].slice(-MAX_HISTORY);
     notesRef.current = updated;
     setNotes(updated);
@@ -128,6 +131,17 @@ export default function App() {
     else next();
   }, [play, next]);
 
+  // Space: replay — or, with infinite sustain, stop the note that is ringing.
+  const replayOrStop = useCallback(() => {
+    if (settingsRef.current.infiniteSustain && isPlaying()) stopPlayback();
+    else replay();
+  }, [replay]);
+
+  // Turning infinite sustain off shouldn't leave a note ringing forever.
+  useEffect(() => {
+    if (!settings.infiniteSustain) stopPlayback();
+  }, [settings.infiniteSustain]);
+
   const reveal = useCallback(() => {
     const i = indexRef.current;
     if (i < 0) return;
@@ -145,7 +159,7 @@ export default function App() {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.code === 'Space') {
         e.preventDefault();
-        replay();
+        replayOrStop();
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         next();
@@ -157,7 +171,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [replay, next, prev, reveal]);
+  }, [replayOrStop, next, prev, reveal]);
 
   // ---------------------------------------------------------------------------
   // Display
@@ -166,6 +180,8 @@ export default function App() {
   const tuning = current?.tuning ?? s.tuning;
   const target = current?.target ?? null;
   const revealed = current?.revealed ?? false;
+  // The note name is always shown unless the user hides it; revealing also shows it.
+  const nameVisible = !s.hideTarget || revealed;
   const presetName = TUNING_PRESETS.find((p) => p.id === findPresetId(s.tuning))?.name.split(' (')[0] ?? 'Custom';
   const keyLabel =
     s.scaleId === 'chromatic' ? 'Any note' : `${pcName(activeKey, s.useFlats)} ${getScale(s.scaleId).name}`;
@@ -178,8 +194,10 @@ export default function App() {
   if (!target) hint = 'Press Space or → to hear your first note.';
   else if (revealed)
     hint = `${midiToName(target.midi, s.useFlats)} is ${target.fret === 0 ? 'the open string' : `fret ${target.fret}`} on string ${stringNo(target.string)}. Press → for the next note.`;
-  else
+  else if (s.hideTarget)
     hint = `Find it on string ${stringNo(target.string)} by ear. Click the fretboard to compare notes, then press V to check.`;
+  else
+    hint = `Find ${midiToName(target.midi, s.useFlats)} on string ${stringNo(target.string)}, then press V to check the fret.`;
 
   return (
     <div className="app">
@@ -241,9 +259,17 @@ export default function App() {
             ) : (
               <div className="target-string muted">—</div>
             )}
-            <div className={`target-note ${target && revealed ? 'shown' : ''}`}>{target && revealed ? midiToName(target.midi, s.useFlats) : '?'}</div>
+            <div className={`target-note ${target && nameVisible ? 'shown' : ''}`}>{target && nameVisible ? midiToName(target.midi, s.useFlats) : '?'}</div>
             <div className="target-pos">
-              {target && revealed ? (target.fret === 0 ? 'open string' : `fret ${target.fret}`) : target ? 'Find the fret by ear' : ''}
+              {target && revealed
+                ? target.fret === 0
+                  ? 'open string'
+                  : `fret ${target.fret}`
+                : target
+                  ? s.hideTarget
+                    ? 'Find the note by ear'
+                    : 'Find the fret'
+                  : ''}
             </div>
           </div>
 
@@ -256,10 +282,10 @@ export default function App() {
               <button className="btn" onClick={prev} disabled={index <= 0} title="Previous note">
                 ← Prev <kbd>←</kbd>
               </button>
-              <button className="btn" onClick={replay} disabled={candidates.length === 0 && !target} title="Replay the note">
-                ↻ Replay <kbd>Space</kbd>
+              <button className="btn" onClick={replayOrStop} disabled={candidates.length === 0 && !target} title="Replay the note">
+                {s.infiniteSustain && playing ? '■ Stop' : '↻ Replay'} <kbd>Space</kbd>
               </button>
-              <button className="btn" onClick={reveal} disabled={!target || revealed} title="Reveal the note">
+              <button className="btn" onClick={reveal} disabled={!target || revealed} title="Show the fret on the fretboard">
                 👁 Reveal <kbd>V</kbd>
               </button>
               <button className="btn primary" onClick={next} disabled={candidates.length === 0} title="Next note">
@@ -314,7 +340,7 @@ export default function App() {
             <div className="history">
               {notes.map((n, i) => (
                 <button key={i} className={`hist ${i === index ? 'current' : ''} ${n.revealed ? 'revealed' : ''}`} onClick={() => goTo(i)}>
-                  <b>{n.revealed ? midiToName(n.target.midi, s.useFlats) : '?'}</b>
+                  <b>{n.revealed || !s.hideTarget ? midiToName(n.target.midi, s.useFlats) : '?'}</b>
                   <span>
                     str {n.tuning.length - n.target.string}
                     {n.revealed && ` · fr ${n.target.fret}`}
@@ -334,7 +360,7 @@ export default function App() {
       )}
 
       <footer className="foot">
-        Shortcuts: <kbd>Space</kbd> replay · <kbd>←</kbd> previous note · <kbd>→</kbd> next note · <kbd>V</kbd> reveal
+        Shortcuts: <kbd>Space</kbd> {s.infiniteSustain ? 'replay / stop' : 'replay'} · <kbd>←</kbd> previous note · <kbd>→</kbd> next note · <kbd>V</kbd> reveal fret
       </footer>
     </div>
   );
